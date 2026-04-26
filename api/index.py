@@ -8,15 +8,15 @@ from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 from nowpayment import NowPayments
 
-# ---------- CONFIGURAZIONE ----------
+# ==================== CONFIGURAZIONE ====================
 TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN')
 NOWPAYMENTS_API_KEY = os.environ.get('NOWPAYMENTS_API_KEY')
-# -----------------------------------
+# ========================================================
 
 # Inizializza client NowPayments
 np_client = NowPayments(NOWPAYMENTS_API_KEY)
 
-# ---------- CATALOGO PRODOTTI ----------
+# ==================== CATALOGO PRODOTTI ====================
 PRODOTTI = {
     "1": {
         "nome": "📘 Corso Crypto Base",
@@ -33,14 +33,11 @@ PRODOTTI = {
         "photo_url": "https://picsum.photos/id/20/500/300"
     }
 }
-# -----------------------------------
+# ============================================================
 
-# Inizializza l'applicazione Telegram
-application = Application.builder().token(TELEGRAM_TOKEN).build()
-
-# ---------- FUNZIONI DATABASE ----------
+# ---------- Database SQLite (temporaneo su Vercel) ----------
 def salva_ordine(user_id, prodotti_id, totale, valuta):
-    """Salva un nuovo ordine nel database temporaneo"""
+    """Salva un nuovo ordine nel database (file temporaneo /tmp)"""
     conn = sqlite3.connect("/tmp/markethub.db")
     cursor = conn.cursor()
     cursor.execute("""
@@ -63,16 +60,15 @@ def salva_ordine(user_id, prodotti_id, totale, valuta):
     conn.close()
     return order_id
 
-# ---------- COMANDI BOT ----------
+# ---------- Handler del bot ----------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Mostra il catalogo dei prodotti"""
+    """Mostra il catalogo prodotti"""
     keyboard = []
     for pid, prodotto in PRODOTTI.items():
         keyboard.append([InlineKeyboardButton(
             f"{prodotto['nome']} - {prodotto['prezzo']}{prodotto['valuta']}",
             callback_data=f"prod_{pid}"
         )])
-    
     await update.message.reply_text(
         "🟢 *MarketHub* 🟢\n\nBenvenuto nel nostro negozio.\nScegli un prodotto:",
         reply_markup=InlineKeyboardMarkup(keyboard),
@@ -120,7 +116,7 @@ async def mostra_prodotto(update: Update, context: ContextTypes.DEFAULT_TYPE, pr
         
         keyboard = [[InlineKeyboardButton("◀️ Torna al catalogo", callback_data="catalogo")]]
         
-        # Cancella il vecchio messaggio di caricamento e invia il prodotto con immagine
+        # Cancella il messaggio di caricamento e invia il prodotto con immagine
         await query.message.delete()
         await context.bot.send_photo(
             chat_id=update.effective_chat.id,
@@ -167,14 +163,15 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         prodotto_id = query.data.split("_")[1]
         await mostra_prodotto(update, context, prodotto_id)
 
-# Registra i command handlers
+# ---------- Inizializzazione applicazione Telegram ----------
+application = Application.builder().token(TELEGRAM_TOKEN).build()
 application.add_handler(CommandHandler("start", start))
 application.add_handler(CallbackQueryHandler(button_handler))
 
-# ---------- FUNZIONE PRINCIPALE PER VERCEL ----------
+# ==================== FUNZIONE PRINCIPALE PER VERCEL ====================
 def handler(event, context):
     """
-    Funzione serverless che Vercel chiama quando arriva una richiesta POST.
+    Funzione serverless chiamata da Vercel su ogni richiesta POST di Telegram.
     """
     try:
         # Estrae il corpo della richiesta (l'update di Telegram)
@@ -183,19 +180,18 @@ def handler(event, context):
         # Crea un oggetto Update di python-telegram-bot
         update = Update.de_json(body, application.bot)
         
-        # Crea un loop di eventi asincrono per eseguire il processamento
+        # Esegue il processamento dell'update in modo asincrono
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         loop.run_until_complete(application.process_update(update))
         
-        # Risponde a Vercel (e quindi a Telegram) che tutto è ok
+        # Risposta di successo a Vercel
         return {
             'statusCode': 200,
             'body': json.dumps({'status': 'ok'})
         }
     except Exception as e:
-        # In caso di errore, lo logga e risponde con un errore
-        print(f"Errore: {e}")
+        print(f"Errore nel handler: {e}")
         return {
             'statusCode': 500,
             'body': json.dumps({'status': 'error', 'message': str(e)})
