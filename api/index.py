@@ -14,10 +14,43 @@ from nowpayment import NowPayments
 # ==================== CONFIGURAZIONE ====================
 TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN')
 NOWPAYMENTS_API_KEY = os.environ.get('NOWPAYMENTS_API_KEY')
-ADMIN_CHAT_ID = "IL_TUO_ID_TELEGRAM"  # <-- SOSTITUISCI (es. "123456789")
+ADMIN_CHAT_ID = "IL_TUO_ID_TELEGRAM"  # <-- Inserisci il tuo ID Telegram (es. "123456789")
 # ========================================================
 
 np_client = NowPayments(NOWPAYMENTS_API_KEY)
+
+# ==================== DATABASE PER VERCEL (Linux) ====================
+DB_PATH = "/tmp/markethub.db"
+
+def init_db():
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS ordini (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            prodotti TEXT,
+            totale REAL,
+            valuta TEXT,
+            stato TEXT,
+            data TEXT,
+            indirizzo TEXT
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+def salva_ordine(user_id, prodotti_id, totale, valuta, indirizzo=None):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("""
+        INSERT INTO ordini (user_id, prodotti, totale, valuta, stato, data, indirizzo)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    """, (user_id, json.dumps(prodotti_id), totale, valuta, "in_attesa", datetime.now().isoformat(), indirizzo))
+    conn.commit()
+    order_id = cursor.lastrowid
+    conn.close()
+    return order_id
 
 # ==================== CATALOGO CORSI ====================
 CORSI = {
@@ -49,39 +82,8 @@ PRODOTTI_AMAZON = {
     }
 }
 
-# Stati conversazione
+# ==================== STATI CONVERSAZIONE ====================
 SPEDIZIONE = 1
-
-# ==================== DATABASE ====================
-def init_db():
-    conn = sqlite3.connect("/tmp/markethub.db")
-    cursor = conn.cursor()
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS ordini (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER,
-            prodotti TEXT,
-            totale REAL,
-            valuta TEXT,
-            stato TEXT,
-            data TEXT,
-            indirizzo TEXT
-        )
-    """)
-    conn.commit()
-    conn.close()
-
-def salva_ordine(user_id, prodotti_id, totale, valuta, indirizzo=None):
-    conn = sqlite3.connect("/tmp/markethub.db")
-    cursor = conn.cursor()
-    cursor.execute("""
-        INSERT INTO ordini (user_id, prodotti, totale, valuta, stato, data, indirizzo)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
-    """, (user_id, json.dumps(prodotti_id), totale, valuta, "in_attesa", datetime.now().isoformat(), indirizzo))
-    conn.commit()
-    order_id = cursor.lastrowid
-    conn.close()
-    return order_id
 
 # ==================== NOTIFICA ADMIN ====================
 async def notifica_admin(context, ordine_id, prodotto_nome, totale, indirizzo, username=None):
@@ -193,7 +195,6 @@ async def ricevi_indirizzo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     corso_id = context.user_data.get('corso_id')
     corso = CORSI[corso_id]
     
-    # Salva ordine
     ordine_id = salva_ordine(
         user_id=update.effective_user.id,
         prodotti_id=[corso_id],
@@ -202,7 +203,6 @@ async def ricevi_indirizzo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         indirizzo=indirizzo
     )
     
-    # Genera pagamento
     try:
         invoice = np_client.payment.create_invoice(
             price_amount=corso['prezzo'],
@@ -229,7 +229,6 @@ async def ricevi_indirizzo(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="Markdown"
         )
         
-        # Notifica admin
         await notifica_admin(
             context, ordine_id, corso['nome'], corso['prezzo'],
             indirizzo, update.effective_user.username
@@ -246,7 +245,6 @@ async def cancella(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
     return ConversationHandler.END
 
-# ==================== CALLBACK GENERALI ====================
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
@@ -265,13 +263,12 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         prod_id = data.split("_")[1]
         await mostra_prodotto_amazon(update, context, prod_id)
 
-# ==================== AVVIO ====================
+# ==================== INIZIALIZZAZIONE APP ====================
 init_db()
 application = Application.builder().token(TELEGRAM_TOKEN).build()
 application.add_handler(CommandHandler("start", start))
 application.add_handler(CallbackQueryHandler(button_handler))
 
-# Handler per la raccolta indirizzo (conversazione)
 conv_handler = ConversationHandler(
     entry_points=[],
     states={SPEDIZIONE: [MessageHandler(filters.TEXT | filters.LOCATION, ricevi_indirizzo)]},
@@ -279,6 +276,7 @@ conv_handler = ConversationHandler(
 )
 application.add_handler(conv_handler)
 
+# ==================== HANDLER PER VERCEL ====================
 def handler(event, context):
     try:
         body = json.loads(event['body'])
