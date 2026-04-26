@@ -13,11 +13,10 @@ TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN')
 NOWPAYMENTS_API_KEY = os.environ.get('NOWPAYMENTS_API_KEY')
 # ========================================================
 
-# Inizializza client NowPayments
 np_client = NowPayments(NOWPAYMENTS_API_KEY)
 
-# ==================== CATALOGO PRODOTTI ====================
-PRODOTTI = {
+# ==================== CATALOGO CORSI (pagamento crypto) ====================
+CORSI = {
     "1": {
         "nome": "📘 Corso Crypto Base",
         "prezzo": 10,
@@ -33,11 +32,37 @@ PRODOTTI = {
         "photo_url": "https://picsum.photos/id/20/500/300"
     }
 }
+
+# ==================== PRODOTTI AMAZON AFFILIAZIONE ====================
+PRODOTTI_AMAZON = {
+    "amz_1": {
+        "nome": "🎧 Cuffie Wireless Bluetooth",
+        "prezzo": "39.99",
+        "valuta": "EUR",
+        "descrizione": "Cuffie con cancellazione del rumore, 30h di autonomia.\n⭐ 4.5/5 su Amazon",
+        "photo_url": "https://picsum.photos/id/1/500/300",
+        "affiliate_link": "https://amzn.to/IL_TUO_LINK_AFFILIATO_1"
+    },
+    "amz_2": {
+        "nome": "⌚ Smartwatch Fitness Tracker",
+        "prezzo": "89.99",
+        "valuta": "EUR",
+        "descrizione": "Monitoraggio battito cardiaco, GPS, resistente all'acqua.\n⭐ 4.7/5 su Amazon",
+        "photo_url": "https://picsum.photos/id/2/500/300",
+        "affiliate_link": "https://amzn.to/IL_TUO_LINK_AFFILIATO_2"
+    },
+    "amz_3": {
+        "nome": "🔋 Power Bank 20000mAh",
+        "prezzo": "29.99",
+        "valuta": "EUR",
+        "descrizione": "Ricarica rapida, 3 porte USB, display digitale.\n⭐ 4.6/5 su Amazon",
+        "photo_url": "https://picsum.photos/id/3/500/300",
+        "affiliate_link": "https://amzn.to/IL_TUO_LINK_AFFILIATO_3"
+    }
+}
 # ============================================================
 
-# ---------- Database SQLite (temporaneo su Vercel) ----------
 def salva_ordine(user_id, prodotti_id, totale, valuta):
-    """Salva un nuovo ordine nel database (file temporaneo /tmp)"""
     conn = sqlite3.connect("/tmp/markethub.db")
     cursor = conn.cursor()
     cursor.execute("""
@@ -60,67 +85,104 @@ def salva_ordine(user_id, prodotti_id, totale, valuta):
     conn.close()
     return order_id
 
-# ---------- Handler del bot ----------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Mostra il catalogo prodotti"""
-    keyboard = []
-    for pid, prodotto in PRODOTTI.items():
-        keyboard.append([InlineKeyboardButton(
-            f"{prodotto['nome']} - {prodotto['prezzo']}{prodotto['valuta']}",
-            callback_data=f"prod_{pid}"
-        )])
+    """Mostra il catalogo con due sezioni"""
+    keyboard = [
+        [InlineKeyboardButton("📚 I NOSTRI CORSI", callback_data="sezione_corsi")],
+        [InlineKeyboardButton("🛍️ PRODOTTI AMAZON", callback_data="sezione_amazon")]
+    ]
+    
     await update.message.reply_text(
-        "🟢 *MarketHub* 🟢\n\nBenvenuto nel nostro negozio.\nScegli un prodotto:",
+        "🟢 *MarketHub* 🟢\n\n"
+        "Benvenuto nel nostro negozio.\n"
+        "Scegli una categoria:",
         reply_markup=InlineKeyboardMarkup(keyboard),
         parse_mode="Markdown"
     )
 
-async def mostra_prodotto(update: Update, context: ContextTypes.DEFAULT_TYPE, prodotto_id: str):
-    """Mostra il prodotto, genera il pagamento e salva l'ordine"""
+async def mostra_sezione_corsi(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Mostra la lista dei corsi"""
     query = update.callback_query
-    prodotto = PRODOTTI[prodotto_id]
     await query.answer()
     
-    # Messaggio temporaneo di caricamento
+    keyboard = []
+    for pid, corso in CORSI.items():
+        keyboard.append([InlineKeyboardButton(
+            f"{corso['nome']} - {corso['prezzo']}{corso['valuta']}",
+            callback_data=f"corso_{pid}"
+        )])
+    keyboard.append([InlineKeyboardButton("◀️ Torna al menu principale", callback_data="menu")])
+    
+    await query.message.delete()
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text="📚 *I nostri corsi*\n\nScegli un corso:",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode="Markdown"
+    )
+
+async def mostra_sezione_amazon(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Mostra la lista dei prodotti Amazon"""
+    query = update.callback_query
+    await query.answer()
+    
+    keyboard = []
+    for pid, prodotto in PRODOTTI_AMAZON.items():
+        keyboard.append([InlineKeyboardButton(
+            f"{prodotto['nome']} - {prodotto['prezzo']}{prodotto['valuta']}",
+            callback_data=f"amz_{pid}"
+        )])
+    keyboard.append([InlineKeyboardButton("◀️ Torna al menu principale", callback_data="menu")])
+    
+    await query.message.delete()
+    await context.bot.send_message(
+        chat_id=update.effective_chat.id,
+        text="🛍️ *Prodotti Amazon consigliati*\n\nScegli un prodotto:",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode="Markdown"
+    )
+
+async def mostra_corso(update: Update, context: ContextTypes.DEFAULT_TYPE, corso_id: str):
+    """Mostra il corso e genera pagamento crypto"""
+    query = update.callback_query
+    corso = CORSI[corso_id]
+    await query.answer()
+    
     await query.edit_message_text(
-        f"⏳ *Generazione pagamento per {prodotto['nome']}...*",
+        f"⏳ *Generazione pagamento per {corso['nome']}...*",
         parse_mode="Markdown"
     )
     
     try:
-        # Crea invoice su NowPayments
         invoice = np_client.payment.create_invoice(
-            price_amount=prodotto["prezzo"],
-            price_currency=prodotto["valuta"]
+            price_amount=corso["prezzo"],
+            price_currency=corso["valuta"]
         )
         payment_link = invoice.get("invoice_url")
         if not payment_link:
-            raise Exception("Nessun link di pagamento ricevuto")
+            raise Exception("Nessun link di pagamento")
         
-        # Salva l'ordine nel database
         ordine_id = salva_ordine(
             user_id=update.effective_user.id,
-            prodotti_id=[prodotto_id],
-            totale=prodotto["prezzo"],
-            valuta=prodotto["valuta"]
+            prodotti_id=[corso_id],
+            totale=corso["prezzo"],
+            valuta=corso["valuta"]
         )
         
-        # Testo del messaggio con il link di pagamento
         caption = (
             f"✅ *Ordine #{ordine_id} creato!*\n"
-            f"💰 *Totale:* {prodotto['prezzo']} {prodotto['valuta']}\n\n"
+            f"💰 *Totale:* {corso['prezzo']} {corso['valuta']}\n\n"
             f"🔗 **[CLICCA QUI PER PAGARE CON CRIPTO]({payment_link})**\n\n"
             f"📌 *Supporta:* Bitcoin, Monero (XMR), USDT, Ethereum e 100+ altre crypto\n\n"
-            f"_Dopo il pagamento, lo stato dell'ordine verrà aggiornato._"
+            f"_Dopo il pagamento, riceverai il corso via email._"
         )
         
-        keyboard = [[InlineKeyboardButton("◀️ Torna al catalogo", callback_data="catalogo")]]
+        keyboard = [[InlineKeyboardButton("◀️ Torna ai corsi", callback_data="sezione_corsi")]]
         
-        # Cancella il messaggio di caricamento e invia il prodotto con immagine
         await query.message.delete()
         await context.bot.send_photo(
             chat_id=update.effective_chat.id,
-            photo=prodotto["photo_url"],
+            photo=corso["photo_url"],
             caption=caption,
             reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode="Markdown"
@@ -132,67 +194,66 @@ async def mostra_prodotto(update: Update, context: ContextTypes.DEFAULT_TYPE, pr
             parse_mode="Markdown"
         )
 
+async def mostra_prodotto_amazon(update: Update, context: ContextTypes.DEFAULT_TYPE, prodotto_id: str):
+    """Mostra il prodotto Amazon con link affiliato diretto"""
+    query = update.callback_query
+    prodotto = PRODOTTI_AMAZON[prodotto_id]
+    await query.answer()
+    
+    caption = (
+        f"🛍️ *{prodotto['nome']}*\n\n"
+        f"{prodotto['descrizione']}\n\n"
+        f"💰 *Prezzo:* {prodotto['prezzo']} {prodotto['valuta']}\n"
+        f"🏪 *Venduto da:* Amazon\n\n"
+        f"🔗 **[ACQUISTA SU AMAZON]({prodotto['affiliate_link']})**\n\n"
+        f"_Quando acquisti tramite questo link, supporti il nostro progetto con una piccola commissione (senza costi aggiuntivi per te)._"
+    )
+    
+    keyboard = [[InlineKeyboardButton("◀️ Torna ai prodotti Amazon", callback_data="sezione_amazon")]]
+    
+    await query.message.delete()
+    await context.bot.send_photo(
+        chat_id=update.effective_chat.id,
+        photo=prodotto["photo_url"],
+        caption=caption,
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode="Markdown"
+    )
+
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Gestisce tutti i callback dei pulsanti"""
     query = update.callback_query
     await query.answer()
     
-    # Pulsante "Torna al catalogo"
-    if query.data == "catalogo":
-        # Elimina il messaggio corrente (quello con il prodotto e il link)
-        await query.message.delete()
-        
-        # Ricostruisce il catalogo da zero
-        keyboard = []
-        for pid, prodotto in PRODOTTI.items():
-            keyboard.append([InlineKeyboardButton(
-                f"{prodotto['nome']} - {prodotto['prezzo']}{prodotto['valuta']}",
-                callback_data=f"prod_{pid}"
-            )])
-        
-        # Invia un nuovo messaggio con il catalogo
-        await context.bot.send_message(
-            chat_id=update.effective_chat.id,
-            text="🟢 *MarketHub* 🟢\n\nBenvenuto nel nostro negozio.\nScegli un prodotto:",
-            reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode="Markdown"
-        )
+    data = query.data
     
-    # Pulsante di un prodotto
-    elif query.data.startswith("prod_"):
-        prodotto_id = query.data.split("_")[1]
-        await mostra_prodotto(update, context, prodotto_id)
+    if data == "menu":
+        await start(update, context)
+    elif data == "sezione_corsi":
+        await mostra_sezione_corsi(update, context)
+    elif data == "sezione_amazon":
+        await mostra_sezione_amazon(update, context)
+    elif data.startswith("corso_"):
+        corso_id = data.split("_")[1]
+        await mostra_corso(update, context, corso_id)
+    elif data.startswith("amz_"):
+        prodotto_id = data.split("_")[1]
+        await mostra_prodotto_amazon(update, context, prodotto_id)
 
-# ---------- Inizializzazione applicazione Telegram ----------
+# Inizializzazione
 application = Application.builder().token(TELEGRAM_TOKEN).build()
 application.add_handler(CommandHandler("start", start))
 application.add_handler(CallbackQueryHandler(button_handler))
 
-# ==================== FUNZIONE PRINCIPALE PER VERCEL ====================
+# Handler per Vercel
 def handler(event, context):
-    """
-    Funzione serverless chiamata da Vercel su ogni richiesta POST di Telegram.
-    """
     try:
-        # Estrae il corpo della richiesta (l'update di Telegram)
         body = json.loads(event['body'])
-        
-        # Crea un oggetto Update di python-telegram-bot
         update = Update.de_json(body, application.bot)
-        
-        # Esegue il processamento dell'update in modo asincrono
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         loop.run_until_complete(application.process_update(update))
-        
-        # Risposta di successo a Vercel
-        return {
-            'statusCode': 200,
-            'body': json.dumps({'status': 'ok'})
-        }
+        return {'statusCode': 200, 'body': json.dumps({'status': 'ok'})}
     except Exception as e:
-        print(f"Errore nel handler: {e}")
-        return {
-            'statusCode': 500,
-            'body': json.dumps({'status': 'error', 'message': str(e)})
-        }
+        print(f"Errore: {e}")
+        return {'statusCode': 500, 'body': json.dumps({'status': 'error', 'message': str(e)})}
