@@ -9,7 +9,6 @@ from telegram.ext import Application, CommandHandler, CallbackQueryHandler, Cont
 from nowpayment import NowPayments
 
 # ---------- CONFIGURAZIONE ----------
-# Recupera le chiavi dalle Variabili d'Ambiente di Vercel
 TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN')
 NOWPAYMENTS_API_KEY = os.environ.get('NOWPAYMENTS_API_KEY')
 # -----------------------------------
@@ -18,21 +17,20 @@ NOWPAYMENTS_API_KEY = os.environ.get('NOWPAYMENTS_API_KEY')
 np_client = NowPayments(NOWPAYMENTS_API_KEY)
 
 # ---------- CATALOGO PRODOTTI ----------
-# Puoi modificare o espandere questa lista liberamente
 PRODOTTI = {
     "1": {
         "nome": "📘 Corso Crypto Base",
         "prezzo": 10,
         "valuta": "EUR",
         "descrizione": "Impara le basi in 7 giorni.\n✅ 5 moduli video\n✅ PDF scaricabile",
-        "photo_url": "https://picsum.photos/id/0/500/300"   # Sostituisci con la tua immagine
+        "photo_url": "https://picsum.photos/id/0/500/300"
     },
     "2": {
         "nome": "🎓 Corso Trading Avanzato",
         "prezzo": 50,
         "valuta": "EUR",
         "descrizione": "Diventa un trader professionista.\n✅ 10 ore di video\n✅ Strumenti esclusivi",
-        "photo_url": "https://picsum.photos/id/20/500/300"  # Sostituisci con la tua immagine
+        "photo_url": "https://picsum.photos/id/20/500/300"
     }
 }
 # -----------------------------------
@@ -40,11 +38,9 @@ PRODOTTI = {
 # Inizializza l'applicazione Telegram
 application = Application.builder().token(TELEGRAM_TOKEN).build()
 
-# ---------- LOGICA BOT ----------
+# ---------- FUNZIONI DATABASE ----------
 def salva_ordine(user_id, prodotti_id, totale, valuta):
-    """Salva un nuovo ordine nel database (versione locale)"""
-    # Su Vercel, per un database persistente, dovresti usare Supabase o MongoDB.
-    # Per semplicità, qui scriviamo su file in /tmp che è temporaneo.
+    """Salva un nuovo ordine nel database temporaneo"""
     conn = sqlite3.connect("/tmp/markethub.db")
     cursor = conn.cursor()
     cursor.execute("""
@@ -67,6 +63,7 @@ def salva_ordine(user_id, prodotti_id, totale, valuta):
     conn.close()
     return order_id
 
+# ---------- COMANDI BOT ----------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Mostra il catalogo dei prodotti"""
     keyboard = []
@@ -75,6 +72,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"{prodotto['nome']} - {prodotto['prezzo']}{prodotto['valuta']}",
             callback_data=f"prod_{pid}"
         )])
+    
     await update.message.reply_text(
         "🟢 *MarketHub* 🟢\n\nBenvenuto nel nostro negozio.\nScegli un prodotto:",
         reply_markup=InlineKeyboardMarkup(keyboard),
@@ -145,19 +143,25 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Pulsante "Torna al catalogo"
     if query.data == "catalogo":
+        # Elimina il messaggio corrente (quello con il prodotto e il link)
         await query.message.delete()
+        
+        # Ricostruisce il catalogo da zero
         keyboard = []
         for pid, prodotto in PRODOTTI.items():
             keyboard.append([InlineKeyboardButton(
                 f"{prodotto['nome']} - {prodotto['prezzo']}{prodotto['valuta']}",
                 callback_data=f"prod_{pid}"
             )])
+        
+        # Invia un nuovo messaggio con il catalogo
         await context.bot.send_message(
             chat_id=update.effective_chat.id,
             text="🟢 *MarketHub* 🟢\n\nBenvenuto nel nostro negozio.\nScegli un prodotto:",
             reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode="Markdown"
         )
+    
     # Pulsante di un prodotto
     elif query.data.startswith("prod_"):
         prodotto_id = query.data.split("_")[1]
@@ -170,7 +174,7 @@ application.add_handler(CallbackQueryHandler(button_handler))
 # ---------- FUNZIONE PRINCIPALE PER VERCEL ----------
 def handler(event, context):
     """
-    Questa è la funzione serverless che Vercel chiama quando arriva una richiesta POST.
+    Funzione serverless che Vercel chiama quando arriva una richiesta POST.
     """
     try:
         # Estrae il corpo della richiesta (l'update di Telegram)
