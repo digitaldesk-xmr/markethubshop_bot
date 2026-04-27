@@ -6,4 +6,4 @@ jobs:
   ping:
     runs-on: ubuntu-latest
     steps:
-      - run: curl -s https://markethubshop-bot.vercel.app/api/index
+      - run: curl -s https://markethubshop-bot.vercel.app/
