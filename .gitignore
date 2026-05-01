@@ -12,6 +12,7 @@ __pycache__/
 # Database
 *.db
 *.sqlite
+markethub.db
 
 # Environment variables
 .env
@@ -28,3 +29,6 @@ Thumbs.db
 
 # Logs
 *.log
+
+# Vercel (opzionale)
+.vercel
