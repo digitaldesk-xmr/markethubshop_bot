@@ -1,32 +1,21 @@
 import json
 import os
-import sys
 import asyncio
-import logging
 import stripe
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 from nowpayment import NowPayments
 
-# FIX per Python 3.14
-if sys.version_info >= (3, 8):
-    try:
-        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
-    except:
-        pass
-
-# Configurazione dalle variabili d'ambiente Vercel
+# ==================== CONFIGURAZIONE ====================
 TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN')
 NOWPAYMENTS_API_KEY = os.environ.get('NOWPAYMENTS_API_KEY')
 STRIPE_SECRET_KEY = os.environ.get('STRIPE_SECRET_KEY')
-ADMIN_CHAT_ID = int(os.environ.get('ADMIN_CHAT_ID', 0))
-
-logging.basicConfig(level=logging.INFO)
+ADMIN_CHAT_ID = os.environ.get('ADMIN_CHAT_ID')
 
 stripe.api_key = STRIPE_SECRET_KEY
 np_client = NowPayments(NOWPAYMENTS_API_KEY)
 
-# ==================== IL TUO CATALOGO ====================
+# ==================== CATALOGHI ====================
 PRODOTTI = {
     "1": {"nome": "📘 Corso Crypto Base", "prezzo": 10, "valuta": "EUR",
           "descrizione": "Impara le basi in 7 giorni.\n✅ 5 moduli video\n✅ PDF scaricabile"},
@@ -78,14 +67,14 @@ async def paga_stripe(update, context, item, back_callback):
     except Exception as e:
         await q.edit_message_text(f"❌ Errore Stripe: {e}", parse_mode="Markdown")
 
-# ==================== HANDLER (stessi del tuo bot) ====================
+# ==================== HANDLER ====================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [
+    kb = [
         [InlineKeyboardButton("📦 PRODOTTI", callback_data="sezione_prodotti")],
         [InlineKeyboardButton("🛍️ AMAZON", callback_data="sezione_amazon")],
         [InlineKeyboardButton("💼 SERVIZI", callback_data="sezione_servizi")]
     ]
-    await update.message.reply_text("🟢 *MarketHub* 🟢\n\nScegli una categoria:", reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+    await update.message.reply_text("🟢 *MarketHub* 🟢\n\nScegli:", reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
 
 async def sezione_prodotti(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
@@ -156,12 +145,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if data == "menu":
         await q.message.delete()
-        kb = [
-            [InlineKeyboardButton("📦 PRODOTTI", callback_data="sezione_prodotti")],
-            [InlineKeyboardButton("🛍️ AMAZON", callback_data="sezione_amazon")],
-            [InlineKeyboardButton("💼 SERVIZI", callback_data="sezione_servizi")]
-        ]
-        await context.bot.send_message(chat_id=update.effective_chat.id, text="🟢 *MarketHub* 🟢\n\nScegli una categoria:", reply_markup=InlineKeyboardMarkup(kb), parse_mode="Markdown")
+        await start(update, context)
     elif data == "sezione_prodotti":
         await sezione_prodotti(update, context)
     elif data == "sezione_amazon":
@@ -181,21 +165,19 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif data.startswith("stripe_serv_"):
         await stripe_serv(update, context)
 
-# ==================== ENTRY POINT PER VERCEL ====================
-# Inizializza l'applicazione una volta all'avvio
-application = Application.builder().token(TELEGRAM_TOKEN).build()
-application.add_handler(CommandHandler("start", start))
-application.add_handler(CallbackQueryHandler(button_handler))
+# ==================== ENTRY POINT ====================
+app = Application.builder().token(TELEGRAM_TOKEN).build()
+app.add_handler(CommandHandler("start", start))
+app.add_handler(CallbackQueryHandler(button_handler))
 
 def handler(event, context):
-    """Funzione serverless chiamata da Vercel"""
     try:
         body = json.loads(event['body'])
-        update = Update.de_json(body, application.bot)
+        update = Update.de_json(body, app.bot)
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        loop.run_until_complete(application.process_update(update))
+        loop.run_until_complete(app.process_update(update))
         return {'statusCode': 200, 'body': json.dumps({'status': 'ok'})}
     except Exception as e:
-        print(f"Errore: {e}")
+        print(f"Error: {e}")
         return {'statusCode': 500, 'body': json.dumps({'status': 'error', 'message': str(e)})}
